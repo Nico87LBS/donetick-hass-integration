@@ -2,7 +2,7 @@
 import logging
 from datetime import timedelta
 import voluptuous as vol
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.helpers import config_validation as cv
@@ -13,6 +13,7 @@ from .const import DOMAIN, CONF_URL, CONF_TOKEN, CONF_SHOW_DUE_IN, CONF_REFRESH_
 from .api import DonetickApiClient
 from .frontend import async_setup_frontend
 from .completion_history import async_completed_occurrences
+from .approval import ApprovalTracker, STATUS_PENDING_APPROVAL, pending_approvals
 
 _LOGGER = logging.getLogger(__name__)
 PLATFORMS = [Platform.TODO, Platform.SENSOR, Platform.SWITCH, Platform.NUMBER, Platform.TEXT, Platform.CALENDAR]
@@ -25,6 +26,9 @@ SERVICE_DELETE_TASK = "delete_task"
 SERVICE_SKIP_TASK = "skip_task"
 SERVICE_COMPLETE_ASSIGNED_TASK = "complete_assigned_task"
 SERVICE_POSTPONE_TASK = "postpone_task"
+SERVICE_APPROVE_TASK = "approve_task"
+SERVICE_REJECT_TASK = "reject_task"
+SERVICE_REDEEM_REWARD = "redeem_reward"
 
 COMPLETE_TASK_SCHEMA = vol.Schema({
     vol.Required("task_id"): vol.Coerce(int),
@@ -67,6 +71,21 @@ ASSIGNED_TASK_SCHEMA = vol.Schema({
 })
 POSTPONE_TASK_SCHEMA = ASSIGNED_TASK_SCHEMA
 
+APPROVE_TASK_SCHEMA = vol.Schema({
+    vol.Required("task_id"): vol.All(vol.Coerce(int), vol.Range(min=1)),
+    vol.Optional("config_entry_id"): cv.string,
+})
+
+REJECT_TASK_SCHEMA = APPROVE_TASK_SCHEMA.extend({
+    vol.Optional("note"): cv.string,
+})
+
+REDEEM_REWARD_SCHEMA = vol.Schema({
+    vol.Required("reward_id"): vol.All(vol.Coerce(int), vol.Range(min=1)),
+    vol.Optional("user_id"): vol.All(vol.Coerce(int), vol.Range(min=1)),
+    vol.Optional("config_entry_id"): cv.string,
+})
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Donetick from a config entry."""
     hass.data.setdefault(DOMAIN, {})
@@ -80,9 +99,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
 
     refresh_interval_seconds = entry.data.get(CONF_REFRESH_INTERVAL, DEFAULT_REFRESH_INTERVAL)
+    # Updated in place so entities holding this list see points and photos change.
+    circle_members = []
+    approvals = ApprovalTracker(hass.bus.async_fire)
+
     async def async_update_tasks():
         tasks = await client.async_get_tasks()
-        coordinator.completed_tasks = await async_completed_occurrences(client, tasks)
+        history = await client.async_get_task_history(days=7)
+        coordinator.completed_tasks = await async_completed_occurrences(client, tasks, history)
+        try:
+            circle_members[:] = await client.async_get_circle_members()
+        except Exception as err:
+            _LOGGER.warning("Failed to refresh circle members: %s", err)
+        try:
+            coordinator.rewards = await client.async_get_rewards()
+        except Exception as err:
+            _LOGGER.debug("Failed to refresh rewards: %s", err)
+        coordinator.pending_approvals = pending_approvals(tasks, history, circle_members)
+        approvals.update(coordinator.pending_approvals, entry.entry_id)
         return tasks
 
     coordinator = DataUpdateCoordinator(
@@ -92,14 +126,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         update_method=async_update_tasks,
         update_interval=timedelta(seconds=refresh_interval_seconds),
     )
+    coordinator.rewards = None
+    coordinator.pending_approvals = []
     await coordinator.async_config_entry_first_refresh()
-
-    # Fetch circle members for resolving user IDs to names
-    circle_members = []
-    try:
-        circle_members = await client.async_get_circle_members()
-    except Exception as e:
-        _LOGGER.warning("Failed to fetch circle members: %s", e)
 
     hass.data[DOMAIN][entry.entry_id] = {
         CONF_URL: entry.data[CONF_URL],
@@ -111,8 +140,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     }
     
     # Register services before setting up platforms
-    async def complete_task_handler(call: ServiceCall) -> None:
-        await async_complete_task_service(hass, call)
+    async def complete_task_handler(call: ServiceCall) -> ServiceResponse:
+        return await async_complete_task_service(hass, call)
     
     async def create_task_handler(call: ServiceCall) -> None:
         await async_create_task_service(hass, call)
@@ -131,6 +160,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         SERVICE_COMPLETE_TASK,
         complete_task_handler,
         schema=COMPLETE_TASK_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
     )
     hass.services.async_register(
         DOMAIN,
@@ -171,21 +201,42 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                                  complete_assigned_handler, schema=ASSIGNED_TASK_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_POSTPONE_TASK,
                                  postpone_handler, schema=POSTPONE_TASK_SCHEMA)
+
+    async def approve_handler(call: ServiceCall) -> None:
+        await async_resolve_approval_service(hass, call, approve=True)
+
+    async def reject_handler(call: ServiceCall) -> None:
+        await async_resolve_approval_service(hass, call, approve=False)
+
+    async def redeem_handler(call: ServiceCall) -> ServiceResponse:
+        return await async_redeem_reward_service(hass, call)
+
+    hass.services.async_register(DOMAIN, SERVICE_APPROVE_TASK,
+                                 approve_handler, schema=APPROVE_TASK_SCHEMA)
+    hass.services.async_register(DOMAIN, SERVICE_REJECT_TASK,
+                                 reject_handler, schema=REJECT_TASK_SCHEMA)
+    hass.services.async_register(DOMAIN, SERVICE_REDEEM_REWARD, redeem_handler,
+                                 schema=REDEEM_REWARD_SCHEMA,
+                                 supports_response=SupportsResponse.OPTIONAL)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     entry.add_update_listener(async_reload_entry)
     
     return True
 
-async def async_complete_task_service(hass: HomeAssistant, call: ServiceCall) -> None:
-    """Handle the complete_task service call."""
+async def async_complete_task_service(hass: HomeAssistant, call: ServiceCall) -> ServiceResponse:
+    """Handle the complete_task service call.
+
+    A task that requires approval is only submitted: it waits for an admin and
+    the response says so with pending_approval.
+    """
     task_id = call.data["task_id"]
     completed_by = call.data.get("completed_by")
     config_entry_id = call.data.get("config_entry_id")
     
     entry = await _get_config_entry(hass, config_entry_id)
     if not entry:
-        return
+        raise HomeAssistantError("No matching Donetick integration found for complete_task")
 
     # Get API client and coordinator
     config = hass.data[DOMAIN][entry.entry_id]
@@ -194,11 +245,50 @@ async def async_complete_task_service(hass: HomeAssistant, call: ServiceCall) ->
 
     try:
         result = await client.async_complete_task(task_id, completed_by)
-        _LOGGER.info("Task %d completed successfully by user %s", task_id, completed_by or "default")
-        await coordinator.async_request_refresh()
-
     except Exception as e:
         _LOGGER.error("Failed to complete task %d: %s", task_id, e)
+        raise HomeAssistantError(f"Failed to complete Donetick task {task_id}: {e}") from e
+
+    pending = result.status == STATUS_PENDING_APPROVAL
+    _LOGGER.info("Task %d %s by user %s", task_id,
+                 "submitted for approval" if pending else "completed", completed_by or "default")
+    # Refresh now rather than debounced, so a dashboard tap shows its result at once.
+    await coordinator.async_refresh()
+    return {"task_id": task_id, "pending_approval": pending}
+
+
+async def async_resolve_approval_service(hass: HomeAssistant, call: ServiceCall, *, approve: bool) -> None:
+    """Approve or reject a task completion waiting for approval."""
+    task_id = call.data["task_id"]
+    entry = await _get_config_entry(hass, call.data.get("config_entry_id"))
+    if not entry:
+        raise HomeAssistantError("No matching Donetick integration found")
+    config = hass.data[DOMAIN][entry.entry_id]
+    try:
+        if approve:
+            await config["client"].async_approve_task(task_id)
+        else:
+            await config["client"].async_reject_task(task_id, call.data.get("note"))
+    except Exception as err:
+        raise HomeAssistantError(str(err)) from err
+    finally:
+        await config["coordinator"].async_refresh()
+
+
+async def async_redeem_reward_service(hass: HomeAssistant, call: ServiceCall) -> ServiceResponse:
+    """Spend a member's points on a reward."""
+    entry = await _get_config_entry(hass, call.data.get("config_entry_id"))
+    if not entry:
+        raise HomeAssistantError("No matching Donetick integration found")
+    config = hass.data[DOMAIN][entry.entry_id]
+    try:
+        redemption = await config["client"].async_redeem_reward(call.data["reward_id"], call.data.get("user_id"))
+    except Exception as err:
+        raise HomeAssistantError(str(err)) from err
+    finally:
+        await config["coordinator"].async_refresh()
+    return {"redemption_id": redemption.id, "approved": redemption.status == 1,
+            "points_cost": redemption.points_cost}
 
 async def async_create_task_service(hass: HomeAssistant, call: ServiceCall) -> None:
     """Handle the create_task service call."""
@@ -387,7 +477,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         
         # Remove services if this is the last config entry
         if not hass.data[DOMAIN]:
-            for service_name in [SERVICE_COMPLETE_TASK, SERVICE_CREATE_TASK, SERVICE_UPDATE_TASK, SERVICE_DELETE_TASK, SERVICE_SKIP_TASK, SERVICE_COMPLETE_ASSIGNED_TASK, SERVICE_POSTPONE_TASK]:
+            for service_name in [SERVICE_COMPLETE_TASK, SERVICE_CREATE_TASK, SERVICE_UPDATE_TASK, SERVICE_DELETE_TASK, SERVICE_SKIP_TASK, SERVICE_COMPLETE_ASSIGNED_TASK, SERVICE_POSTPONE_TASK, SERVICE_APPROVE_TASK, SERVICE_REJECT_TASK, SERVICE_REDEEM_REWARD]:
                 if hass.services.has_service(DOMAIN, service_name):
                     hass.services.async_remove(DOMAIN, service_name)
             _LOGGER.debug("Removed services: %s.%s, %s.%s, %s.%s, %s.%s", 

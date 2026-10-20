@@ -1,8 +1,9 @@
 """Build completed occurrences independently of the next scheduled task."""
 
-async def async_completed_occurrences(client, tasks):
+async def async_completed_occurrences(client, tasks, history=None):
     """Read a week of history, resolving archived tasks when necessary."""
-    history = await client.async_get_task_history(days=7)
+    if history is None:
+        history = await client.async_get_task_history(days=7)
     by_id = {task.id: task for task in tasks}
     completed = []
     seen = set()

@@ -12,6 +12,7 @@ from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
 )
 
+from .approval import STATUS_PENDING_APPROVAL
 from .const import DOMAIN
 from .model import DonetickMember, DonetickTask
 
@@ -145,6 +146,9 @@ class DonetickChoreSensor(CoordinatorEntity, SensorEntity):
             "labels": task.labels,
             "is_active": task.is_active,
             "description": task.description,
+            "status": task.status,
+            "pending_approval": task.status == STATUS_PENDING_APPROVAL,
+            "assignee_ids": task.assignee_ids or [],
         }
         return attrs
 

@@ -31,7 +31,8 @@ class TaskSensorAttributeTests(unittest.TestCase):
     def setUpClass(cls):
         namespace = dict(dataclass=dataclass, datetime=datetime, Any=Any, List=List,
                          Optional=Optional, _LOGGER=logging.getLogger(__name__),
-                         CoordinatorEntity=CoordinatorStub, SensorEntity=type("SensorStub", (), {}))
+                         CoordinatorEntity=CoordinatorStub, SensorEntity=type("SensorStub", (), {}),
+                         STATUS_PENDING_APPROVAL=3)
         load_definitions("model.py", {"_parse_datetime", "DonetickTask"}, namespace)
         load_definitions("chore_sensor.py", {"DonetickChoreSensor"}, namespace)
         cls.task_class = namespace["DonetickTask"]
@@ -68,6 +69,15 @@ class TaskSensorAttributeTests(unittest.TestCase):
             with self.subTest(schedule=schedule):
                 self.assertIsNone(self.attributes(frequencyType=schedule,
                                                  frequencyMetadata={"unit": "weeks"})["interval_type"])
+
+    def test_approval_status_and_assignees(self):
+        attrs = self.attributes(status=3, assignees=[{"userId": 2}, {"userId": 3}])
+        self.assertTrue(attrs["pending_approval"])
+        self.assertEqual(attrs["status"], 3)
+        self.assertEqual(attrs["assignee_ids"], [2, 3])
+        attrs = self.attributes()
+        self.assertFalse(attrs["pending_approval"])
+        self.assertEqual(attrs["assignee_ids"], [])
 
 
 if __name__ == "__main__":

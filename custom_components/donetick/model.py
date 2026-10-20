@@ -89,6 +89,52 @@ class DonetickMember:
         return [cls.from_json(member) for member in data]
 
 @dataclass
+class DonetickReward:
+    """Donetick reward catalog item."""
+    id: int
+    name: str
+    points_cost: int
+    description: Optional[str] = None
+    is_active: bool = True
+
+    @classmethod
+    def from_json(cls, data: dict) -> "DonetickReward":
+        """Create a DonetickReward from JSON data."""
+        return cls(
+            id=data["id"],
+            name=data["name"],
+            points_cost=data.get("pointsCost", 0),
+            description=data.get("description") or None,
+            is_active=data.get("isActive", True),
+        )
+
+
+@dataclass
+class DonetickRedemption:
+    """A member's request to spend points on a reward."""
+    id: int
+    reward_id: int
+    user_id: int
+    reward_name: str
+    points_cost: int
+    status: int  # 0 pending, 1 approved, 2 rejected
+    requested_at: Optional[datetime] = None
+
+    @classmethod
+    def from_json(cls, data: dict) -> "DonetickRedemption":
+        """Create a DonetickRedemption from JSON data."""
+        return cls(
+            id=data["id"],
+            reward_id=data.get("rewardId"),
+            user_id=data.get("userId"),
+            reward_name=data.get("rewardName", ""),
+            points_cost=data.get("pointsCost", 0),
+            status=data.get("status", 0),
+            requested_at=_parse_datetime(data.get("requestedAt")),
+        )
+
+
+@dataclass
 class DonetickAssignee:
     """Donetick assignee model."""
     user_id: int
