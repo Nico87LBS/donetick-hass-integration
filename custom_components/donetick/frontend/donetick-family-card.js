@@ -297,8 +297,8 @@ class DonetickFamilyCard extends HTMLElement {
       .row { display: flex; align-items: center; gap: 10px; min-height: 64px; border-top: 1px solid var(--dt-line); }
       .row:last-child { border-bottom: 1px solid var(--dt-line); }
       .row.small { min-height: 56px; }
-      .name { flex: 1 1 auto; min-width: 0; font-size: 17px; font-weight: 600; display: flex; flex-direction: column; }
-      .name.muted { font-size: 16px; font-weight: 500; color: var(--secondary-text-color); }
+      .name { flex: 1 1 auto; min-width: 0; font-size: 17px; font-weight: 400; display: flex; flex-direction: column; }
+      .name.muted { font-size: 16px; font-weight: 400; color: var(--secondary-text-color); }
       .sub { font-size: 12px; font-weight: 400; color: var(--secondary-text-color); margin-top: 2px; }
       .armed-text { color: var(--dt-green); font-weight: 600; }
       .pts { display: inline-flex; align-items: center; gap: 3px; padding: 4px 10px 4px 8px; border-radius: 999px; font-size: 14px; font-weight: 800;
