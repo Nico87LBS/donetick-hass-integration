@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 globalThis.HTMLElement = class {};
 globalThis.customElements = {define() {}, get() {}, whenDefined() { return Promise.resolve(); }};
 globalThis.window = {};
-const {boardData, labelNames, podium, rewardState} = await import('../custom_components/donetick/frontend/donetick-family-card.js');
+const {boardData, labelNames, podium, rewardState, taskRows} = await import('../custom_components/donetick/frontend/donetick-family-card.js');
 
 assert.deepEqual(labelNames([{name: 'Enfants '}, 'Maison', {name: ''}, null]), ['enfants', 'maison']);
 assert.deepEqual(labelNames('a, b'), ['a', 'b']);
@@ -59,9 +59,11 @@ data = boardData(withDone, {due: 'today', members: [2, 3]}, now);
 assert.deepEqual(data.done.map(d => `${d.name}:${d.member.name}`), ['Chat:Anna', 'Lit:Elena']);
 assert.deepEqual(boardData(withDone, {due: 'today', members: [2, 3], labels: ['enfants']}, now).done, [], 'label filter applies to done tasks');
 
-// Podium: three distinct scores, ties share a step.
+// Podium: one step per member up to three, ties share a step.
 const m = (id, points) => ({id, points});
-assert.deepEqual(podium([m(1, 5), m(2, 3)]).map(step => step.map(x => x.id)), [[1], [2], []]);
+assert.deepEqual(podium([m(1, 5)]).map(step => step.map(x => x.id)), [[1]]);
+assert.deepEqual(podium([m(1, 5), m(2, 3)]).map(step => step.map(x => x.id)), [[1], [2]]);
+assert.deepEqual(podium([m(1, 4), m(2, 4)]).map(step => step.map(x => x.id)), [[1, 2], []]);
 assert.deepEqual(podium([m(1, 4), m(2, 4), m(3, 1)]).map(step => step.map(x => x.id)), [[1, 2], [3], []]);
 assert.deepEqual(podium([m(1, 9), m(2, 7), m(3, 5), m(4, 1)]).map(step => step.map(x => x.id)), [[1], [2], [3]]);
 
@@ -73,4 +75,18 @@ const daily = {points_cost: 3, quota_count: 1, quota_used: {'2': 1}, quota_reset
 assert.equal(rewardState(daily, elena, now).kind, 'quota');
 assert.equal(rewardState(daily, {id: 3, points: 3}, now).kind, 'available', 'quota is per member');
 assert.equal(rewardState(daily, elena, new Date('2026-10-21T08:00:00')).kind, 'available', 'usage expires with the period');
+// A task created once per child is one row: each photo completes that child's
+// copy, a pending copy shows who did it, and a copy done today shows a check.
+const E = {id: 2, name: 'Elena'}, A = {id: 3, name: 'Anna'};
+const copy = (id, name, members, extra = {}) => ({id, name, points: 1, due: null, members, pending: false, completedBy: null, ...extra});
+let rows = taskRows([copy(30, 'Faire son lit', [A]), copy(31, 'faire son lit ', [E])], [], [E, A]);
+assert.equal(rows.length, 1);
+assert.deepEqual(rows[0].slots.map(s => `${s.member.name}:${s.state}:${s.task.id}`), ['Elena:tap:31', 'Anna:tap:30']);
+rows = taskRows([copy(30, 'Faire son lit', [A])], [{name: 'Faire son lit', member: E}, {name: 'Chat', member: A}], [E, A]);
+assert.deepEqual(rows[0].slots.map(s => `${s.member.name}:${s.state}`), ['Elena:done', 'Anna:tap']);
+rows = taskRows([copy(30, 'Lit', [A]), copy(31, 'Lit', [E], {pending: true, completedBy: E})], [], [E, A]);
+assert.deepEqual(rows[0].slots.map(s => `${s.member.name}:${s.state}`), ['Elena:pending', 'Anna:tap']);
+assert.equal(rows[0].pending, true);
+rows = taskRows([copy(32, 'Dents', [E, A])], [{name: 'Dents', member: E}], [E, A]);
+assert.deepEqual(rows[0].slots.map(s => s.state), ['tap', 'tap'], 'a member who can still do the task keeps a photo');
 console.log('family card tests passed');

@@ -304,7 +304,9 @@ supported, including custom CSS colors and variables such as `var(--success-colo
 
 ## Family board card
 
-`custom:donetick-family-card` is made for a wall tablet. A podium ranks the members by points, with a crown on the leader (members with the same score share a step). Each task due today is one line: its name, its points and a photo button for each member it is assigned to; tapping a photo completes the task for that member. A task that requires approval stays in the list with an hourglass and only the photo of the member who did it, until an admin answers. Tasks done today follow in the same style, with the photo of who did them.
+`custom:donetick-family-card` is made for a wall tablet. A podium ranks the members by points, with one step per member up to three and a crown on the leader (members with the same score share a step). Each task due today is one line: its name, its points and a photo button for each member it is assigned to; tapping a photo completes the task for that member. A task that requires approval stays in the list with an hourglass and only the photo of the member who did it, until an admin answers. Tasks done today follow in the same style, with the photo of who did them. Every photo you can tap has a ring around it.
+
+For a task that each member must do, such as making their bed, create it in Donetick once per member, each assigned to one of them. The card shows tasks with the same name as one line: each photo completes that member's own task, and a member who already did it today gets a check.
 
 The rewards list shows a photo per member on each reward: a gift badge when they can take it, a padlock with the missing points, or a clock with the time left when they have used up the reward's limit for the period. Limits are set on the reward in Donetick ("Limit per member", per day, week or month).
 
@@ -314,10 +316,13 @@ members: [2, 3]        # Donetick user IDs with a photo button; default: everyon
 labels: [kids]         # only tasks with one of these labels; default: all tasks
 due: today             # today (due today, overdue or undated) or all
 show_points: true     # the points podium
+show_todo: true       # tasks to do
 show_done: true       # tasks done today
 show_rewards: true
 show_approval: false   # show Approve and Reject buttons on waiting tasks
 allow_redeem: false    # let members spend points from the card (tap twice to confirm)
 ```
+
+Each part can be turned off, so the same card can show only the rewards on another dashboard view: set `show_points`, `show_todo` and `show_done` to `false`.
 
 Photos come from the members' Donetick profiles; a parent sets a child account's photo in Donetick under Settings → Managed Accounts. The card is translated into English and French.
