@@ -32,11 +32,27 @@ Points preserve an explicit zero; tasks without a point value expose `null`.
 - `donetick.create_task` - Create new tasks
 - `donetick.update_task` - Update existing tasks
 - `donetick.delete_task` - Delete tasks
-- `donetick.complete_task` - Mark tasks complete with user attribution
+- `donetick.complete_task` - Mark tasks complete with user attribution. A task with "Require approval" waits for an admin instead; the response returns `pending_approval: true`
+- `donetick.approve_task` / `donetick.reject_task` - Resolve a completion waiting for approval
+- `donetick.redeem_reward` - Spend points on a reward, optionally for another member (`user_id`); that redemption is approved at once
 
 To reactivate an archived task with `donetick.update_task`, set `force_unarchive: true`. This requires a Donetick server that supports `forceUnarchive`.
 
 To assign a task, call `donetick.update_task` with `task_id` and `assigned_to` set to a Donetick user ID, or `null` for Anyone. The user must already be in that task's assignee list, unless the task is currently assigned to Anyone. Switching to or from Anyone uses Donetick's task editor and requires permission to edit the task.
+
+### ⭐ Points, approvals and rewards
+
+These need a Donetick server with the external API routes for approval and rewards.
+
+- **Points sensors**: one per circle member, such as `sensor.donetick_points_elena`. The state is the points the member can still spend; `total_points` and `points_redeemed` are attributes, and the entity picture is the member's Donetick profile photo.
+- **`sensor.donetick_pending_approvals`**: how many completions wait for approval, with the task, who did it and the points in the `tasks` attribute.
+- **`sensor.donetick_rewards`**: the active rewards and their cost.
+- Task sensors also expose `status`, `pending_approval` and `assignee_ids`.
+- **Events**: `donetick_task_pending_approval` fires when a task starts waiting for approval (`task_id`, `task_name`, `points`, `completed_by`, `completed_by_name`), and `donetick_task_approval_resolved` when it stops waiting, whether it was approved or rejected here or in Donetick.
+
+### 📱 Approval notification blueprint
+
+Import [`blueprints/automation/donetick/approval_notification.yaml`](blueprints/automation/donetick/approval_notification.yaml) (Settings → Automations & scenes → Blueprints → Import blueprint, paste the file's GitHub URL) and pick your phone. Each completion waiting for approval sends a notification with Approve and Reject buttons, and the notification disappears once the task is resolved anywhere.
 
 ## Installation
 
@@ -284,3 +300,21 @@ reset action icon, label and color overrides while preserving the list, user, fi
 title. Completion-specific action customization appears when completion uses a button.
 The HA dashboard editor's live preview reflects each change. Existing YAML options remain
 supported, including custom CSS colors and variables such as `var(--success-color)`.
+
+
+## Family board card
+
+`custom:donetick-family-card` is made for a wall tablet: each task due today shows a photo button for each member it is assigned to, and tapping a photo completes the task for that member. Tasks that require approval show "Waiting for approval" until an admin answers. The card also shows each member's points, with a crown for the leader, and which rewards they can afford.
+
+```yaml
+type: custom:donetick-family-card
+members: [2, 3]        # Donetick user IDs with a photo button; default: everyone
+labels: [kids]         # only tasks with one of these labels; default: all tasks
+due: today             # today (due today, overdue or undated) or all
+show_points: true
+show_rewards: true
+show_approval: false   # show Approve and Reject buttons on waiting tasks
+allow_redeem: false    # let members spend points from the card (tap twice to confirm)
+```
+
+Photos come from the members' Donetick profiles; a parent sets a child account's photo in Donetick under Settings → Managed Accounts. The card is translated into English and French.

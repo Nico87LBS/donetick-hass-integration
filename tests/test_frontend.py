@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
+import unittest.mock
 from unittest.mock import AsyncMock, Mock
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,6 +26,7 @@ class FrontendTests(unittest.IsolatedAsyncioTestCase):
         exec(compile(tree, str(source), "exec"), namespace)
         self.setup_frontend = namespace["async_setup_frontend"]
         self.card_file = namespace["CARD_FILE"]
+        self.family_card_file = namespace["FAMILY_CARD_FILE"]
 
         async def executor(fn):
             await asyncio.sleep(0)
@@ -37,10 +39,13 @@ class FrontendTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.gather(self.setup_frontend(self.hass), self.setup_frontend(self.hass))
         await self.setup_frontend(self.hass)
         self.hass.http.async_register_static_paths.assert_awaited_once_with([
-            ("/donetick/donetick-user-todo-card.js", str(self.card_file), False)])
+            ("/donetick/donetick-user-todo-card.js", str(self.card_file), False),
+            ("/donetick/donetick-family-card.js", str(self.family_card_file), False)])
         version = sha256(self.card_file.read_bytes()).hexdigest()[:12]
-        self.add_url.assert_called_once_with(
-            self.hass, f"/donetick/donetick-user-todo-card.js?v={version}")
+        family_version = sha256(self.family_card_file.read_bytes()).hexdigest()[:12]
+        self.assertEqual(self.add_url.call_args_list, [
+            unittest.mock.call(self.hass, f"/donetick/donetick-user-todo-card.js?v={version}"),
+            unittest.mock.call(self.hass, f"/donetick/donetick-family-card.js?v={family_version}")])
 
     async def test_registration_failure_can_retry(self):
         self.hass.http.async_register_static_paths.side_effect = RuntimeError("Not ready")
@@ -49,13 +54,14 @@ class FrontendTests(unittest.IsolatedAsyncioTestCase):
         self.add_url.assert_not_called()
         self.hass.http.async_register_static_paths.side_effect = None
         await self.setup_frontend(self.hass)
-        self.add_url.assert_called_once()
+        self.assertEqual(self.add_url.call_count, 2)
 
     async def test_hacs_package_contains_card_and_setup_dependency(self):
         manifest = json.loads((ROOT / "custom_components/donetick/manifest.json").read_text())
         self.assertIn("frontend", manifest["dependencies"])
         self.assertTrue(self.card_file.is_file())
         self.assertIn("donetick-user-todo-card", self.card_file.read_text(encoding="utf-8"))
+        self.assertIn("donetick-family-card", self.family_card_file.read_text(encoding="utf-8"))
         tree = ast.parse((ROOT / "custom_components/donetick/__init__.py").read_text())
         setup = next(node for node in tree.body
                      if isinstance(node, ast.AsyncFunctionDef) and node.name == "async_setup_entry")

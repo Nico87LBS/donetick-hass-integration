@@ -1,0 +1,85 @@
+blueprint:
+  name: Donetick approval notification
+  description: >
+    Sends an actionable notification to a phone when a Donetick task is waiting for
+    approval, with Approve and Reject buttons. The notification is cleared once the
+    task is approved or rejected, from the phone, the dashboard or Donetick itself.
+  domain: automation
+  source_url: https://github.com/Nico87LBS/donetick-hass-integration/blob/main/blueprints/automation/donetick/approval_notification.yaml
+  input:
+    notify_device:
+      name: Phone
+      description: The Home Assistant companion app that receives the request.
+      selector:
+        device:
+          integration: mobile_app
+    approve_title:
+      name: Approve button
+      default: "✅ Approve"
+      selector:
+        text:
+    reject_title:
+      name: Reject button
+      default: "❌ Reject"
+      selector:
+        text:
+
+mode: queued
+max: 20
+
+triggers:
+  - trigger: event
+    event_type: donetick_task_pending_approval
+    id: pending
+  - trigger: event
+    event_type: donetick_task_approval_resolved
+    id: resolved
+  - trigger: event
+    event_type: mobile_app_notification_action
+    id: answer
+
+variables:
+  approve_title: !input approve_title
+  reject_title: !input reject_title
+  answer: "{{ trigger.event.data.action | default('') }}"
+
+conditions:
+  - condition: template
+    value_template: "{{ trigger.id != 'answer' or answer is match('DONETICK_(APPROVE|REJECT)_[0-9]+$') }}"
+
+actions:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: pending
+        sequence:
+          - domain: mobile_app
+            type: notify
+            device_id: !input notify_device
+            title: "⭐ {{ trigger.event.data.completed_by_name or 'Donetick' }}"
+            message: >-
+              {{ trigger.event.data.task_name }}{% if trigger.event.data.points %} ({{ trigger.event.data.points }} pts){% endif %}
+            data:
+              tag: "donetick_{{ trigger.event.data.task_id }}"
+              actions:
+                - action: "DONETICK_APPROVE_{{ trigger.event.data.task_id }}"
+                  title: "{{ approve_title }}"
+                - action: "DONETICK_REJECT_{{ trigger.event.data.task_id }}"
+                  title: "{{ reject_title }}"
+      - conditions:
+          - condition: trigger
+            id: resolved
+        sequence:
+          - domain: mobile_app
+            type: notify
+            device_id: !input notify_device
+            message: clear_notification
+            data:
+              tag: "donetick_{{ trigger.event.data.task_id }}"
+      - conditions:
+          - condition: trigger
+            id: answer
+        sequence:
+          - action: "donetick.{{ 'approve_task' if answer.startswith('DONETICK_APPROVE_') else 'reject_task' }}"
+            data:
+              task_id: "{{ answer.split('_')[-1] | int }}"

@@ -8,7 +8,7 @@ import aiohttp
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import API_TIMEOUT
-from .model import DonetickProject, DonetickTask, DonetickThing, DonetickMember, DonetickChoreHistory
+from .model import DonetickProject, DonetickTask, DonetickThing, DonetickMember, DonetickChoreHistory, DonetickReward, DonetickRedemption
 _LOGGER = logging.getLogger(__name__)
 
 class DonetickApiClient:
@@ -222,6 +222,13 @@ class DonetickApiClient:
                 params=params,
                 timeout=API_TIMEOUT
             ) as response:
+                if response.status == 400:
+                    try:
+                        reason = (await response.json()).get("error")
+                    except (aiohttp.ClientError, ValueError, AttributeError):
+                        reason = None
+                    if reason:
+                        raise ValueError(f"Donetick refused to complete the task: {reason}")
                 response.raise_for_status()
                 data = await response.json()
                 return DonetickTask.from_json(data)
@@ -232,6 +239,73 @@ class DonetickApiClient:
         except (KeyError, ValueError, json.JSONDecodeError) as err:
             _LOGGER.error("Error parsing Donetick complete task response: %s", err)
             raise
+
+    async def _post_action(self, path: str, operation: str, payload: dict | None = None) -> dict:
+        """POST to an action route, raising Donetick's own error message on 4xx."""
+        async with self._session.post(
+            f"{self._base_url}{path}",
+            headers=self._headers(),
+            json=payload or {},
+            timeout=API_TIMEOUT,
+        ) as response:
+            if 400 <= response.status < 500:
+                try:
+                    reason = (await response.json()).get("error")
+                except (aiohttp.ClientError, ValueError, AttributeError):
+                    reason = None
+                if response.status == 404 and not reason:
+                    reason = "this Donetick server does not support it yet"
+                raise ValueError(f"Donetick refused to {operation}: {reason or response.status}")
+            response.raise_for_status()
+            return await response.json()
+
+    async def async_approve_task(self, task_id: int) -> DonetickTask:
+        """Approve a completion waiting for approval; its points go to the completer."""
+        data = await self._post_action(f"/eapi/v1/chore/{task_id}/approve", "approve the task")
+        return DonetickTask.from_json(data["res"])
+
+    async def async_reject_task(self, task_id: int, note: str | None = None) -> None:
+        """Reject a completion waiting for approval; the task is due again."""
+        await self._post_action(f"/eapi/v1/chore/{task_id}/reject", "reject the task",
+                                {"note": note} if note else None)
+
+    async def async_get_rewards(self) -> Optional[List[DonetickReward]]:
+        """Get the reward catalog, or None when the server has no rewards API."""
+        async with self._session.get(
+            f"{self._base_url}/eapi/v1/rewards",
+            headers=self._headers(),
+            timeout=API_TIMEOUT,
+        ) as response:
+            if response.status in (403, 404):
+                _LOGGER.debug("Donetick rewards API unavailable: HTTP %s", response.status)
+                return None
+            response.raise_for_status()
+            data = await response.json()
+            return [DonetickReward.from_json(item) for item in data or []]
+
+    async def async_get_redemptions(self, status: str | None = None) -> List[DonetickRedemption]:
+        """Get reward redemptions, optionally only pending, approved or rejected."""
+        async with self._session.get(
+            f"{self._base_url}/eapi/v1/rewards/redemptions",
+            headers=self._headers(),
+            params={"status": status} if status else None,
+            timeout=API_TIMEOUT,
+        ) as response:
+            response.raise_for_status()
+            data = await response.json()
+            return [DonetickRedemption.from_json(item) for item in data or []]
+
+    async def async_redeem_reward(self, reward_id: int, user_id: int | None = None) -> DonetickRedemption:
+        """Spend points on a reward. For another member it is approved at once."""
+        payload = {"userId": user_id} if user_id else None
+        data = await self._post_action(f"/eapi/v1/rewards/{reward_id}/redeem", "redeem the reward", payload)
+        return DonetickRedemption.from_json(data["res"])
+
+    async def async_resolve_redemption(self, redemption_id: int, approve: bool) -> None:
+        """Approve or reject a pending redemption."""
+        action = "approve" if approve else "reject"
+        await self._post_action(f"/eapi/v1/rewards/redemptions/{redemption_id}/{action}",
+                                f"{action} the redemption")
 
     async def async_create_task(self, name: str, description: str = None, due_date: str = None, created_by: int = None, project_id: int = None) -> DonetickTask:
         """Create a new task"""

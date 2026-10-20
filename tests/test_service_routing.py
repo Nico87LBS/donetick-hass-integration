@@ -11,13 +11,19 @@ COMPONENT = ROOT / "custom_components" / "donetick"
 DOMAIN = "donetick"
 
 
+class RoutingError(Exception):
+    """Stands in for HomeAssistantError."""
+
+
 class ServiceRoutingTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         tree = ast.parse((COMPONENT / "__init__.py").read_text(encoding="utf-8"))
         functions = [node for node in tree.body if isinstance(node, ast.AsyncFunctionDef)
                      and node.name in ("_get_config_entry", "async_complete_task_service")]
         namespace = {"DOMAIN": DOMAIN, "ConfigEntry": object, "HomeAssistant": object,
-                     "ServiceCall": object, "_LOGGER": logging.getLogger(__name__)}
+                     "ServiceCall": object, "ServiceResponse": object,
+                     "HomeAssistantError": RoutingError, "STATUS_PENDING_APPROVAL": 3,
+                     "_LOGGER": logging.getLogger(__name__)}
         exec(compile(ast.Module(body=functions, type_ignores=[]), "routing", "exec"), namespace)
         self.resolve = namespace["_get_config_entry"]
         self.complete = namespace["async_complete_task_service"]
@@ -41,8 +47,9 @@ class ServiceRoutingTests(unittest.IsolatedAsyncioTestCase):
         for selector in ("upstream", "todo.upstream", "missing"):
             self.assertIsNone(await self.resolve(self.hass, selector))
             # Would raise KeyError if the handler attempted to access a integration client.
-            await self.complete(self.hass, SimpleNamespace(data={
-                "task_id": 1, "config_entry_id": selector}))
+            with self.assertRaises(RoutingError):
+                await self.complete(self.hass, SimpleNamespace(data={
+                    "task_id": 1, "config_entry_id": selector}))
 
     async def test_unloaded_entry_is_rejected(self):
         self.hass.data[DOMAIN].clear()

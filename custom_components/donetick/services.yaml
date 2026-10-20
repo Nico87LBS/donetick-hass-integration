@@ -1,6 +1,6 @@
 complete_task:
   name: Complete Task
-  description: Complete a Donetick task with optional user attribution
+  description: Complete a Donetick task with optional user attribution. A task that requires approval waits for an admin instead, and the response returns pending_approval true.
   fields:
     task_id:
       name: Task ID
@@ -186,5 +186,73 @@ postpone_task:
           min: 1
           mode: box
     config_entry_id:
+      selector:
+        text:
+approve_task:
+  name: Approve task
+  description: Approve a completion waiting for approval. The task is completed and its points go to the member who did it.
+  fields:
+    task_id:
+      name: Task ID
+      description: The ID of the task waiting for approval
+      required: true
+      selector:
+        number:
+          min: 1
+          mode: box
+    config_entry_id:
+      name: Config Entry ID
+      description: The specific Donetick integration to use (optional, uses first if not specified)
+      required: false
+      selector:
+        text:
+reject_task:
+  name: Reject task
+  description: Reject a completion waiting for approval. No points are given and the task is due again.
+  fields:
+    task_id:
+      name: Task ID
+      description: The ID of the task waiting for approval
+      required: true
+      selector:
+        number:
+          min: 1
+          mode: box
+    note:
+      name: Note
+      description: Why the completion was rejected (optional)
+      required: false
+      selector:
+        text:
+    config_entry_id:
+      name: Config Entry ID
+      description: The specific Donetick integration to use (optional, uses first if not specified)
+      required: false
+      selector:
+        text:
+redeem_reward:
+  name: Redeem reward
+  description: Spend points on a Donetick reward. For another member (user_id), the API token owner must be an admin or manager and the redemption is approved at once.
+  fields:
+    reward_id:
+      name: Reward ID
+      description: The ID of the reward (see the rewards sensor)
+      required: true
+      selector:
+        number:
+          min: 1
+          mode: box
+    user_id:
+      name: Member user ID
+      description: The Donetick user ID whose points are spent (optional, defaults to the API token owner)
+      required: false
+      selector:
+        number:
+          min: 1
+          mode: box
+    config_entry_id:
+      name: Config Entry ID
+      description: The specific Donetick integration to use (optional, uses first if not specified)
+      required: false
       selector:
         text:
