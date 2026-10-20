@@ -1,6 +1,6 @@
 """Donetick models."""
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Optional, List
 from homeassistant.components.todo import (
@@ -96,6 +96,11 @@ class DonetickReward:
     points_cost: int
     description: Optional[str] = None
     is_active: bool = True
+    # Redemptions allowed per member per calendar period; 0 means no limit.
+    quota_count: int = 0
+    quota_period: Optional[str] = None
+    quota_used: dict[int, int] = field(default_factory=dict)
+    quota_resets_at: Optional[datetime] = None
 
     @classmethod
     def from_json(cls, data: dict) -> "DonetickReward":
@@ -106,6 +111,10 @@ class DonetickReward:
             points_cost=data.get("pointsCost", 0),
             description=data.get("description") or None,
             is_active=data.get("isActive", True),
+            quota_count=data.get("quotaCount") or 0,
+            quota_period=data.get("quotaPeriod") or None,
+            quota_used={int(user): used for user, used in (data.get("quotaUsed") or {}).items()},
+            quota_resets_at=_parse_datetime(data.get("quotaResetsAt")),
         )
 
 

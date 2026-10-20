@@ -15,7 +15,7 @@ assert.equal(descriptionText('<script>alert(1)</script><style>body{display:none}
 assert.equal(descriptionText('<p>&lt;script&gt;literal&lt;/script&gt;</p>'),'<script>literal</script>');
 const calls=[]; let fail=false;
 const hass={locale:{language:'en'},states:{'todo.all':{state:'2',attributes:{config_entry_id:'entry',circle_members:[{user_id:1,display_name:'Torben'}],tasks:[
-  {task_id:1,assigned_to:1,name:'Weekly',description:'First line\n<script>plain text</script>',can_postpone:true,next_due_date:'2026-10-20T16:00:00Z'},
+  {task_id:1,assigned_to:1,name:'Weekly',description:'First line\n<script>plain text</script>',can_postpone:true,next_due_date:'2036-10-20T16:00:00Z'},
   {task_id:2,assigned_to:1,name:'One-off',can_postpone:false},
   {task_id:3,assigned_to:2,name:'Other user',can_postpone:true}
 ]}}},callService:async(...args)=>{calls.push(args);if(fail)throw new Error('Permission denied');}};
@@ -203,7 +203,7 @@ const callsBeforeUnchanged=calls.length;submit();await tick();assert.equal(calls
 assert.equal(root.querySelectorAll('[role=dialog], [popover]').length,0);
 assert.equal(root.querySelectorAll('.action-panel button').length,2);
 assert.equal(root.querySelector('.action-panel').previousElementSibling.className,'row');
-assert.equal(root.querySelector('.action-panel ha-form').data.date,'2026-10-20');
+assert.equal(root.querySelector('.action-panel ha-form').data.date,'2036-10-20');
 assert.equal(root.querySelector('.action-panel ha-form').schema[0].schema.length,1);
 click('Change due date: Weekly');assert.equal(root.querySelector('form'),null);
 click('Change due date: Weekly');

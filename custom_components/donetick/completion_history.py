@@ -23,6 +23,7 @@ async def async_completed_occurrences(client, tasks, history=None):
             "name": task.name,
             "description": task.description,
             "labels": task.labels,
+            "points": getattr(task, "points", None),
             "project_id": task.project_id,
             "assigned_to": occurrence.assigned_to,
             "completed_by": occurrence.completed_by,
