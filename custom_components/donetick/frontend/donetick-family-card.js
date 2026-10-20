@@ -34,10 +34,46 @@ function isDonetick(hass, id) {
 
 const sameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 
-// Members on the podium: up to three steps of distinct scores, ties share a step.
+// Members on the podium: one step per member up to three, ties share a step
+// and leave the lower steps empty.
 export function podium(members) {
-  const scores = [...new Set(members.map(m => m.points))].sort((a, b) => b - a).slice(0, 3);
-  return [0, 1, 2].map(rank => scores[rank] === undefined ? [] : members.filter(m => m.points === scores[rank]));
+  const scores = [...new Set(members.map(m => m.points))].sort((a, b) => b - a);
+  return [0, 1, 2].slice(0, Math.min(3, members.length))
+    .map(rank => scores[rank] === undefined ? [] : members.filter(m => m.points === scores[rank]));
+}
+
+const sameName = name => String(name ?? '').trim().toLowerCase();
+
+// One row per task name, so a task created once per child reads as one task:
+// each child's photo completes their own copy, and a child who already did it
+// today gets a check instead.
+export function taskRows(tasks, done, members) {
+  const rows = [];
+  for (const task of tasks) {
+    let row = rows.find(r => r.key === sameName(task.name));
+    if (!row) rows.push(row = {key: sameName(task.name), name: task.name, points: task.points, due: task.due, tasks: [], slots: []});
+    row.tasks.push(task);
+    if (task.due && (!row.due || task.due < row.due)) row.due = task.due;
+    if (task.pending) {
+      if (task.completedBy) row.slots.push({member: task.completedBy, task, state: 'pending'});
+      else row.unknownPending = task;
+    } else {
+      for (const member of task.members) {
+        if (!row.slots.some(slot => slot.member.id === member.id)) row.slots.push({member, task, state: 'tap'});
+      }
+    }
+  }
+  for (const row of rows) {
+    for (const item of done) {
+      if (sameName(item.name) === row.key && !row.slots.some(slot => slot.member.id === item.member.id)) {
+        row.slots.push({member: item.member, state: 'done'});
+      }
+    }
+    const order = member => { const i = members.findIndex(m => m.id === member.id); return i < 0 ? Infinity : i; };
+    row.slots.sort((a, b) => order(a.member) - order(b.member));
+    row.pending = row.tasks.some(task => task.pending);
+  }
+  return rows.sort((a, b) => (a.due ?? Infinity) - (b.due ?? Infinity) || a.name.localeCompare(b.name));
 }
 
 // What a member sees on a reward: available, missing points, or out of quota until a date.
@@ -90,7 +126,7 @@ export function boardData(hass, config, now = new Date()) {
     .filter(item => item.completed_at && sameDay(new Date(item.completed_at), now) && labelled(item.labels))
     .map(item => ({...item, member})))
     .sort((a, b) => new Date(b.completed_at) - new Date(a.completed_at));
-  return {members: shown, tasks: visible, done, rewards: rewards || []};
+  return {members: shown, tasks: visible, rows: taskRows(visible, done, shown), done, rewards: rewards || []};
 }
 
 const icon = {
@@ -130,7 +166,7 @@ class DonetickFamilyCard extends HTMLElement {
     if (config.due && !['today', 'all'].includes(config.due)) throw new Error('due must be today or all');
     if (config.members !== undefined && !Array.isArray(config.members)) throw new Error('members must be a list of Donetick user IDs');
     if (config.labels !== undefined && !Array.isArray(config.labels)) throw new Error('labels must be a list of label names');
-    this._config = {due: 'today', show_points: true, show_done: true, show_rewards: true, show_approval: false, allow_redeem: false, ...config};
+    this._config = {due: 'today', show_points: true, show_todo: true, show_done: true, show_rewards: true, show_approval: false, allow_redeem: false, ...config};
     this.render();
   }
   set hass(hass) {
@@ -142,7 +178,7 @@ class DonetickFamilyCard extends HTMLElement {
       && previous.locale?.language === hass.locale?.language) return;
     this.render();
   }
-  getCardSize() { return 4 + (this._data?.tasks.length || 0) + (this._data?.done.length || 0) + (this._data?.rewards.length || 0); }
+  getCardSize() { return 4 + (this._data?.rows.length || 0) + (this._data?.done.length || 0) + (this._data?.rewards.length || 0); }
   getGridOptions() { return {columns: 12, min_columns: 6}; }
   t(key, values = {}) {
     const language = (this._hass?.locale?.language || 'en').split('-')[0];
@@ -202,7 +238,7 @@ class DonetickFamilyCard extends HTMLElement {
     return value ? `<span class="pts${muted ? ' muted' : ''}${cost ? ' cost' : ''}">${svg('star', 14)}${cost ? '' : '+'}${value}</span>` : '';
   }
   header(iconName, kind, title, count) {
-    return `<div class="head"><span class="head-icon ${kind}">${svg(iconName, 18)}</span><h2>${escape(title)}</h2><span class="count ${kind}">${count}</span></div>`;
+    return `<div class="head ${kind}"><span class="head-icon ${kind}">${svg(iconName, 18)}</span><h2>${escape(title)}</h2><span class="count ${kind}">${count}</span></div>`;
   }
   renderPodium(members) {
     const steps = podium(members);
@@ -214,25 +250,27 @@ class DonetickFamilyCard extends HTMLElement {
       const score = group.length ? `${group[0].points} ${group[0].points === 1 ? 'pt' : 'pts'}` : '&nbsp;';
       return `<div class="podium-col rank${rank + 1}"><div class="podium-faces">${faces}</div><div class="podium-score">${score}</div><div class="step">${rank + 1}</div></div>`;
     };
-    return `<div class="podium">${step(steps[1], 1)}${step(steps[0], 0)}${step(steps[2], 2)}</div>`;
+    const order = [[0], [1, 0], [1, 0, 2]][steps.length - 1];
+    return `<div class="podium steps${steps.length}">${order.map(rank => step(steps[rank], rank)).join('')}</div>`;
   }
-  renderTask(task) {
-    const busy = this._busy.get(task.id);
-    const flash = this._flash.get(task.id);
+  renderTask(row) {
+    const busy = row.tasks.find(task => this._busy.has(task.id));
+    const flash = row.tasks.map(task => this._flash.get(task.id)).find(Boolean);
     let right;
     if (flash) right = `<span class="flash">${escape(flash)}</span>`;
-    else if (task.pending) {
-      const approval = this._config.show_approval ? `
-        <button class="icon-btn ok" data-action="approve" data-task="${task.id}" ${busy !== undefined ? 'disabled' : ''} aria-label="${escape(this.t('approve'))}">${svg('check', 18)}</button>
-        <button class="icon-btn no" data-action="reject" data-task="${task.id}" ${busy !== undefined ? 'disabled' : ''} aria-label="${escape(this.t('reject'))}">${svg('cross', 16)}</button>` : '';
-      const who = task.completedBy ? `<span class="slot waiting" title="${escape(task.completedBy.name)}">${this.face(task.completedBy, 48)}${this.badge('wait', 'clock')}</span>` : '';
-      right = `${who}${approval}`;
-    } else {
-      right = task.members.map(m => `<button class="slot tap${busy === m.id ? ' busy' : ''}" data-action="complete" data-task="${task.id}" data-member="${m.id}"
-        ${busy !== undefined ? 'disabled' : ''} aria-label="${escape(`${m.name} : ${task.name}`)}">${this.face(m, 48)}</button>`).join('');
+    else {
+      const approval = task => this._config.show_approval ? `
+        <button class="icon-btn ok" data-action="approve" data-task="${task.id}" ${busy ? 'disabled' : ''} aria-label="${escape(this.t('approve'))}">${svg('check', 18)}</button>
+        <button class="icon-btn no" data-action="reject" data-task="${task.id}" ${busy ? 'disabled' : ''} aria-label="${escape(this.t('reject'))}">${svg('cross', 16)}</button>` : '';
+      right = row.slots.map(({member: m, task, state}) => {
+        if (state === 'pending') return `<span class="slot waiting" title="${escape(m.name)}">${this.face(m, 48)}${this.badge('wait', 'clock')}</span>${approval(task)}`;
+        if (state === 'done') return `<span class="slot" title="${escape(m.name)}">${this.face(m, 48)}${this.badge('done', 'check')}</span>`;
+        return `<button class="slot tap${busy && this._busy.get(busy.id) === m.id ? ' busy' : ''}" data-action="complete" data-task="${task.id}" data-member="${m.id}"
+          ${busy ? 'disabled' : ''} aria-label="${escape(`${m.name} : ${row.name}`)}">${this.face(m, 48)}</button>`;
+      }).join('') + (row.unknownPending ? approval(row.unknownPending) : '');
     }
-    const waiting = task.pending ? `<span class="hourglass">${svg('hourglass', 18, this.t('pending'))}</span>` : '';
-    return `<div class="row${task.pending ? ' is-pending' : ''}"><span class="name">${escape(task.name)}</span>${this.points(task.points)}${waiting}<span class="faces">${right}</span></div>`;
+    const waiting = row.pending ? `<span class="hourglass">${svg('hourglass', 18, this.t('pending'))}</span>` : '';
+    return `<div class="row${row.pending ? ' is-pending' : ''}"><span class="name">${escape(row.name)}</span>${this.points(row.points)}${waiting}<span class="faces">${right}</span></div>`;
   }
   renderDone(item) {
     return `<div class="row small"><span class="name muted">${escape(item.name)}</span>${this.points(item.points, true)}<span class="faces"><span class="slot" title="${escape(item.member.name)}">${this.face(item.member, 40)}${this.badge('done', 'check')}</span></span></div>`;
@@ -266,7 +304,7 @@ class DonetickFamilyCard extends HTMLElement {
     const rewards = this._config.show_rewards && data.members.length ? data.rewards : [];
     const done = this._config.show_done ? data.done : [];
     this.shadowRoot.innerHTML = `<style>
-      :host { --dt-gold: #f5b400; --dt-blue: #3b6fd8; --dt-green: #1e8e3e; --dt-line: var(--divider-color, rgba(127,127,127,.2)); }
+      :host { --dt-ring: #6366f1; --dt-gold: #f5b400; --dt-blue: #3b6fd8; --dt-green: #1e8e3e; --dt-line: var(--divider-color, rgba(127,127,127,.2)); }
       ha-card { padding: 20px 20px 12px; }
       .face { border-radius: 50%; object-fit: cover; display: block; flex: none; }
       .initial { display: grid; place-items: center; background: var(--primary-color); color: var(--text-primary-color, #fff); font-weight: 700; }
@@ -276,6 +314,8 @@ class DonetickFamilyCard extends HTMLElement {
       .podium { display: flex; justify-content: center; align-items: flex-end; gap: 10px; margin: 4px 0 24px; }
       .podium-col { flex: 0 1 150px; display: flex; flex-direction: column; align-items: center; min-width: 0; }
       .podium-col.rank1 { flex-basis: 170px; }
+      .steps1 .podium-col.rank1 { flex-basis: 220px; }
+      .steps2 .podium-col { flex-basis: 170px; }
       .podium-faces { display: flex; gap: 10px; justify-content: center; }
       .podium-member { display: flex; flex-direction: column; align-items: center; }
       .crown { line-height: 0; margin-bottom: 2px; }
@@ -286,7 +326,8 @@ class DonetickFamilyCard extends HTMLElement {
       .rank2 .step { height: 64px; font-size: 22px; background: rgba(59,111,216,.12); color: var(--dt-blue); }
       .rank3 .step { height: 40px; font-size: 18px; background: rgba(160,110,70,.14); color: #8a6f57; }
       section { margin-bottom: 20px; }
-      .head { display: flex; align-items: center; gap: 10px; padding-bottom: 10px; }
+      .head { display: flex; align-items: center; gap: 10px; padding-bottom: 10px; border-bottom: 2px solid var(--dt-line); }
+      .head.todo { border-color: var(--dt-blue); } .head.done { border-color: var(--dt-green); } .head.gift { border-color: #a87300; }
       .head h2 { margin: 0; font-size: 17px; font-weight: 700; }
       .head-icon { width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center; flex: none; }
       .head-icon.todo { background: rgba(59,111,216,.12); color: var(--dt-blue); }
@@ -294,8 +335,8 @@ class DonetickFamilyCard extends HTMLElement {
       .head-icon.gift { background: rgba(245,180,0,.16); color: #a87300; }
       .count { margin-left: auto; font-size: 13px; font-weight: 700; }
       .count.todo { color: var(--dt-blue); } .count.done { color: var(--dt-green); } .count.gift { color: #a87300; }
-      .row { display: flex; align-items: center; gap: 10px; min-height: 64px; border-top: 1px solid var(--dt-line); }
-      .row:last-child { border-bottom: 1px solid var(--dt-line); }
+      .row { display: flex; align-items: center; gap: 10px; min-height: 64px; box-sizing: border-box; margin-top: 8px; padding: 0 10px 0 16px;
+        border: 1px solid var(--dt-line); border-radius: 16px; box-shadow: 0 1px 2px rgba(0,0,0,.05); }
       .row.small { min-height: 56px; }
       .name { flex: 1 1 auto; min-width: 0; font-size: 17px; font-weight: 400; display: flex; flex-direction: column; }
       .name.muted { font-size: 16px; font-weight: 400; color: var(--secondary-text-color); }
@@ -312,9 +353,10 @@ class DonetickFamilyCard extends HTMLElement {
       button { font: inherit; color: inherit; cursor: pointer; border: none; background: none; padding: 0; }
       button:disabled { cursor: default; opacity: .5; }
       .tap { border-radius: 50%; touch-action: manipulation; }
+      .tap .face { box-shadow: 0 0 0 2px var(--card-background-color, #fff), 0 0 0 4px var(--dt-ring); }
       .tap:not(:disabled):active { transform: scale(.92); }
-      .tap.busy { opacity: 1; box-shadow: 0 0 0 3px var(--primary-color); }
-      .tap.armed { box-shadow: 0 0 0 3px var(--card-background-color, #fff), 0 0 0 5px var(--dt-green); }
+      .tap.busy { opacity: 1; } .tap.busy .face { box-shadow: 0 0 0 2px var(--card-background-color, #fff), 0 0 0 4px var(--primary-color); }
+      .tap.armed .face { box-shadow: 0 0 0 2px var(--card-background-color, #fff), 0 0 0 4px var(--dt-green); }
       .waiting .face { opacity: .55; box-shadow: 0 0 0 2px var(--card-background-color, #fff), 0 0 0 4px #c9b8a8; }
       .badge { position: absolute; right: -3px; bottom: -3px; min-width: 20px; height: 20px; box-sizing: border-box; border-radius: 10px;
         border: 2px solid var(--card-background-color, #fff); display: flex; align-items: center; justify-content: center; gap: 2px;
@@ -324,12 +366,12 @@ class DonetickFamilyCard extends HTMLElement {
       .icon-btn { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; }
       .icon-btn.ok { background: rgba(30,142,62,.14); color: var(--dt-green); } .icon-btn.no { background: rgba(217,48,37,.12); color: var(--error-color, #d93025); }
       .flash { font-weight: 700; color: var(--success-color, var(--dt-green)); }
-      .empty-text { font-size: 17px; padding: 12px 0; border-top: 1px solid var(--dt-line); }
+      .empty-text { font-size: 17px; padding: 14px 2px 4px; }
       .error { color: var(--error-color); margin: 8px 0; }
     </style><ha-card>
       ${this._config.show_points && data.members.length ? this.renderPodium(data.members) : ''}
-      <section>${this.header('todo', 'todo', title, data.tasks.length)}
-        ${data.tasks.length ? data.tasks.map(task => this.renderTask(task)).join('') : `<div class="empty-text">${escape(empty)}</div>`}</section>
+      ${this._config.show_todo ? `<section>${this.header('todo', 'todo', title, data.rows.length)}
+        ${data.rows.length ? data.rows.map(row => this.renderTask(row)).join('') : `<div class="empty-text">${escape(empty)}</div>`}</section>` : ''}
       ${done.length ? `<section>${this.header('check', 'done', this.t('done'), done.length)}${done.map(item => this.renderDone(item)).join('')}</section>` : ''}
       ${rewards.length ? `<section>${this.header('gift', 'gift', this.t('rewards'), rewards.length)}${rewards.map(r => this.renderReward(r, data.members)).join('')}</section>` : ''}
       ${this._error ? `<div class="error">${escape(this._error)}</div>` : ''}
@@ -350,7 +392,7 @@ class DonetickFamilyCardEditor extends HTMLElement {
     if (!this._form) {
       this._form = document.createElement('ha-form');
       this._form.computeLabel = schema => ({title: 'Title', members: 'Members with a photo button', labels: 'Only tasks with these labels',
-        due: 'Tasks shown', show_points: 'Show the points podium', show_done: 'Show tasks done today', show_rewards: 'Show rewards',
+        due: 'Tasks shown', show_points: 'Show the points podium', show_todo: 'Show tasks to do', show_done: 'Show tasks done today', show_rewards: 'Show rewards',
         show_approval: 'Show approve and reject buttons', allow_redeem: 'Allow redeeming rewards from the card'}[schema.name] ?? schema.name);
       this._form.addEventListener('value-changed', event => {
         event.stopPropagation();
@@ -369,12 +411,13 @@ class DonetickFamilyCardEditor extends HTMLElement {
       {name: 'labels', selector: {select: {multiple: true, custom_value: true, options: [...labels]}}},
       {name: 'due', selector: {select: {mode: 'dropdown', options: [{value: 'today', label: 'Due today or overdue'}, {value: 'all', label: 'All'}]}}},
       {name: 'show_points', selector: {boolean: {}}},
+      {name: 'show_todo', selector: {boolean: {}}},
       {name: 'show_done', selector: {boolean: {}}},
       {name: 'show_rewards', selector: {boolean: {}}},
       {name: 'show_approval', selector: {boolean: {}}},
       {name: 'allow_redeem', selector: {boolean: {}}},
     ];
-    this._form.data = {due: 'today', show_points: true, show_done: true, show_rewards: true, show_approval: false, allow_redeem: false,
+    this._form.data = {due: 'today', show_points: true, show_todo: true, show_done: true, show_rewards: true, show_approval: false, allow_redeem: false,
       ...this._config, members: (this._config.members || []).map(String)};
   }
 }
