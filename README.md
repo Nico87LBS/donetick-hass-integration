@@ -304,14 +304,17 @@ supported, including custom CSS colors and variables such as `var(--success-colo
 
 ## Family board card
 
-`custom:donetick-family-card` is made for a wall tablet: each task due today shows a photo button for each member it is assigned to, and tapping a photo completes the task for that member. Tasks that require approval show "Waiting for approval" until an admin answers. The card also shows each member's points, with a crown for the leader, and which rewards they can afford.
+`custom:donetick-family-card` is made for a wall tablet. A podium ranks the members by points, with a crown on the leader (members with the same score share a step). Each task due today is one line: its name, its points and a photo button for each member it is assigned to; tapping a photo completes the task for that member. A task that requires approval stays in the list with an hourglass and only the photo of the member who did it, until an admin answers. Tasks done today follow in the same style, with the photo of who did them.
+
+The rewards list shows a photo per member on each reward: a gift badge when they can take it, a padlock with the missing points, or a clock with the time left when they have used up the reward's limit for the period. Limits are set on the reward in Donetick ("Limit per member", per day, week or month).
 
 ```yaml
 type: custom:donetick-family-card
 members: [2, 3]        # Donetick user IDs with a photo button; default: everyone
 labels: [kids]         # only tasks with one of these labels; default: all tasks
 due: today             # today (due today, overdue or undated) or all
-show_points: true
+show_points: true     # the points podium
+show_done: true       # tasks done today
 show_rewards: true
 show_approval: false   # show Approve and Reject buttons on waiting tasks
 allow_redeem: false    # let members spend points from the card (tap twice to confirm)

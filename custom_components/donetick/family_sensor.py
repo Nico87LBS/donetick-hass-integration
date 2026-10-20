@@ -1,11 +1,13 @@
 """Donetick points, pending approval and reward sensors."""
 import logging
+from datetime import timedelta
 from typing import Any
 
 from homeassistant.components.sensor import SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.util import dt as dt_util
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
     DataUpdateCoordinator,
@@ -25,6 +27,23 @@ def member_picture(base_url: str, image: str | None) -> str | None:
         return image
     # Locally stored profile photos are public assets served by Donetick.
     return f"{base_url.rstrip('/')}/api/v1/assets/{image.lstrip('/')}"
+
+
+def recent_completions(completed, user_id, now=None, limit=30):
+    """Tasks a member completed in the last two days, newest first.
+
+    The card keeps the ones done today in the viewer's timezone.
+    """
+    since = (now or dt_util.utcnow()) - timedelta(days=2)
+    recent = []
+    for item in completed:
+        if item.get("completed_by") != user_id:
+            continue
+        completed_at = dt_util.parse_datetime(item.get("completed_at") or "")
+        if completed_at is None or completed_at < since:
+            continue
+        recent.append({key: item.get(key) for key in ("task_id", "name", "points", "labels", "completed_at")})
+    return recent[:limit]
 
 
 async def async_setup_family_sensors(
@@ -127,6 +146,8 @@ class DonetickPointsSensor(_FamilySensor):
             "role": member.role,
             "total_points": member.points,
             "points_redeemed": member.points_redeemed,
+            "recent_completions": recent_completions(
+                getattr(self.coordinator, "completed_tasks", []), member.user_id),
         }
 
 
@@ -171,6 +192,15 @@ class DonetickRewardsSensor(_FamilySensor):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         return {"rewards": [
-            {"id": r.id, "name": r.name, "points_cost": r.points_cost, "description": r.description}
+            {
+                "id": r.id,
+                "name": r.name,
+                "points_cost": r.points_cost,
+                "description": r.description,
+                "quota_count": r.quota_count,
+                "quota_period": r.quota_period,
+                "quota_used": r.quota_used,
+                "quota_resets_at": r.quota_resets_at.isoformat() if r.quota_resets_at else None,
+            }
             for r in self._rewards
         ]}
